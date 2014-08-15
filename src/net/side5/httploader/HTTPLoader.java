@@ -1,6 +1,7 @@
 
 package net.side5.httploader;
 
+import net.side5.httploader.data.IndexesListData;
 import net.side5.httploader.parameter.PostParameter;
 
 import org.apache.http.Header;
@@ -30,6 +31,10 @@ import org.apache.http.params.HttpParams;
 import org.apache.http.params.HttpProtocolParams;
 import org.apache.http.protocol.HTTP;
 import org.apache.http.util.EntityUtils;
+import org.htmlcleaner.CleanerProperties;
+import org.htmlcleaner.HtmlCleaner;
+import org.htmlcleaner.TagNode;
+import org.htmlcleaner.XPatherException;
 
 import android.accounts.NetworkErrorException;
 import android.app.Activity;
@@ -109,6 +114,7 @@ public class HTTPLoader extends AsyncTask<Void, Integer, String> implements OnCa
     private boolean mIsRawOnly = false;
     private boolean mIsBackgroundProcessReturn = false;
     private boolean mIsAuthPopupDisplay = false;
+    private boolean mIsIndexesArrayReturn = false;
 
     private TYPE mType = TYPE.GET;
 
@@ -119,6 +125,7 @@ public class HTTPLoader extends AsyncTask<Void, Integer, String> implements OnCa
     private ArrayList<PostParameter> mPostData = null;
     private ArrayList<MultiProcessData> mMultiProcessURL = null;
     private ArrayList<HTTPResult> mMultiProcessResultArray = null;
+    private ArrayList<IndexesListData> mIndexesArray = null;
     private ProgressDialog mProgressDialog = null;
     private Dialog mLoadingDialog = null;
     private AlertDialog mAuthDialog = null;
@@ -176,6 +183,7 @@ public class HTTPLoader extends AsyncTask<Void, Integer, String> implements OnCa
         private boolean builderIsRawOnly = false;
         private boolean builderIsBackgroundProcessReturn = false;
         private boolean builderIsDebugMode = false;
+        private boolean builderIsIndexesArrayReturn = false;
         private TYPE builderType = TYPE.GET;
 
         public Builder(Activity activity) {
@@ -323,6 +331,11 @@ public class HTTPLoader extends AsyncTask<Void, Integer, String> implements OnCa
             return this;
         }
 
+        public Builder enableIndexesArrayReturn() {
+            this.builderIsIndexesArrayReturn = true;
+            return this;
+        }
+
         public HTTPLoader build() {
             return new HTTPLoader(this);
         }
@@ -341,6 +354,7 @@ public class HTTPLoader extends AsyncTask<Void, Integer, String> implements OnCa
         private CookieManager cookieManager = null;
         private List<Cookie> cookie = null;
         private ArrayList<HTTPResult> resultArray = null;
+        private ArrayList<IndexesListData> indexesArray = null;
         private byte[] rawData = null;
 
         public int getId() {
@@ -446,6 +460,14 @@ public class HTTPLoader extends AsyncTask<Void, Integer, String> implements OnCa
         public void setCredentials(String credentials) {
             this.credentials = credentials;
         }
+
+        public ArrayList<IndexesListData> getIndexesArray() {
+            return indexesArray;
+        }
+
+        public void setIndexesArray(ArrayList<IndexesListData> indexesArray) {
+            this.indexesArray = indexesArray;
+        }
     }
 
     public interface OnHTTPCallbackListener {
@@ -509,6 +531,7 @@ public class HTTPLoader extends AsyncTask<Void, Integer, String> implements OnCa
         this.mLoginPopupPW = builder.builderLoginPopupPW;
         this.mLoginPopupAuto = builder.builderLoginPopupAuto;
         this.mCheckedChangeListener = builder.builderCheckedChangeListener;
+        this.mIsIndexesArrayReturn = builder.builderIsIndexesArrayReturn;
 
         if (builder.builderMultiProcessURL !=null && (builder.builderEnableProgress != -1)) {
             enableProgress(builder.builderEnableProgress);
@@ -751,6 +774,86 @@ public class HTTPLoader extends AsyncTask<Void, Integer, String> implements OnCa
         }
     }
 
+    private void procIndexesData(String result, ArrayList<IndexesListData> array) throws XPatherException {
+        array.clear();
+
+        IndexesListData data = null;
+
+        String title = result;
+        title = title.substring(title.indexOf("id=\"indextitle\""), title.indexOf("</h1>"));
+        title = title.replace("id=\"indextitle\">Index of ", "");
+
+        Trace.v("Title : " + title);
+
+        CleanerProperties props = new CleanerProperties();
+        props.setOmitUnknownTags(true);
+        props.setOmitComments(true);
+        props.setOmitDeprecatedTags(true);
+        props.setOmitDoctypeDeclaration(true);
+        props.setOmitHtmlEnvelope(true);
+        props.setOmitXmlDeclaration(true);
+        props.setAdvancedXmlEscape(true);
+        props.setNamespacesAware(true);
+        props.setTreatUnknownTagsAsContent(true);
+
+        HtmlCleaner cleaner = new HtmlCleaner(props);
+        TagNode node = cleaner.clean(result.trim());
+
+        Object[] objArray = node.evaluateXPath("//table[@id='indexlist']");
+
+        for (Object obj : objArray) {
+            TagNode[] tr = ((TagNode) obj).getElementsByName("tr", true);
+            for (int i = 0; i < tr.length; i++) {
+                String trClass = tr[i].getAttributeByName("class");
+                if (trClass.equals("even") || trClass.equals("odd")) {
+                    data = new IndexesListData();
+                    data.setTitle(title);
+
+                    TagNode[] td = tr[i].getElementsByName("td", true);
+                    for (int tdCount = 0; tdCount < td.length; tdCount++) {
+                        String tdClass = td[tdCount].getAttributeByName("class");
+                        if (!tdClass.equals("indexcolicon")) {
+                            if (tdClass.equals("indexcolname")) {
+                                TagNode[] a = td[tdCount].getElementsByName("a", true);
+                                String href = a[0].getAttributeByName("href");
+                                String name = a[0].getText().toString();
+
+                                if (name.contains("/")) {
+                                    data.setDir(true);
+                                    name = name.substring(0, name.length() - 1);
+                                }
+
+                                data.setName(name.trim());
+                                if (i == 1) {
+                                    data.setUrl(String.format("%s", href));
+                                } else {
+                                    data.setUrl(String.format("%s/%s", title, href));
+                                }
+
+                                Trace.v("Name : " + name + " / " + href);
+                            } else if (tdClass.equals("indexcollastmod")) {
+                                String lastModify = td[tdCount].getText().toString().trim();
+
+                                data.setLastModify(lastModify);
+
+                                Trace.v("Lastmodify : " + lastModify);
+                            } else if (tdClass.equals("indexcolsize")) {
+                                String size = td[tdCount].getText().toString().trim();
+
+                                if (!size.equals("-")) {
+                                    data.setSize(size);
+                                }
+                            }
+                        }
+                    }
+
+                    array.add(data);
+                }
+
+            }
+        }
+    }
+
     @Override
     protected void onPreExecute() {
 
@@ -884,6 +987,7 @@ public class HTTPLoader extends AsyncTask<Void, Integer, String> implements OnCa
                     resultData.setRawData(mResultByteArray);
                     resultData.setObject(mObject);
                     resultData.setCredentials(mCredentials);
+                    resultData.setIndexesArray(mIndexesArray);
 
                     if (mCookies != null) {
                         resultData.setCookie(mCookies);
@@ -937,6 +1041,14 @@ public class HTTPLoader extends AsyncTask<Void, Integer, String> implements OnCa
                         mOnHTTPDownloadListener.onHTTPDownloadComplete(mDownloadPath, mDownloadFilename);
                     }
                 }
+
+                if (mIsIndexesArrayReturn) {
+                    if (mIndexesArray == null) {
+                        mIndexesArray = new ArrayList<IndexesListData>();
+                    }
+
+                    procIndexesData(mResult, mIndexesArray);
+                }
             } catch (Exception e) {
                 onCancelled();
                 mResult = null;
@@ -983,6 +1095,7 @@ public class HTTPLoader extends AsyncTask<Void, Integer, String> implements OnCa
                     resultData.setRawData(mResultByteArray);
                     resultData.setObject(mObject);
                     resultData.setCredentials(mCredentials);
+                    resultData.setIndexesArray(mIndexesArray);
 
                     if (mCookies != null) {
                         resultData.setCookie(mCookies);
